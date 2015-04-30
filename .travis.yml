@@ -1,0 +1,80 @@
+language: php
+
+cache:
+  directories:
+    - $HOME/.composer/cache
+
+php:
+  - 5.4
+  - 5.5
+  - 5.6
+  - 7.0
+
+matrix:
+  fast_finish: true
+  allow_failures:
+    - php: 7.0
+
+mysql:
+  database: kunstmaanbundles
+  username: travis
+  encoding: utf8
+
+env:
+  - SYMFONY_VERSION="2.6.*"
+
+before_install:
+  - composer selfupdate
+
+install:
+  - sudo apt-get install -y --force-yes -qq libxss1 imagemagick ghostscript
+  - ulimit -n 10000
+  - sh -c 'if [ "$TRAVIS_PHP_VERSION" != "hhvm-nightly" ]; then echo "" >> ~/.phpenv/versions/$(phpenv version-name)/etc/conf.d/xdebug.ini; fi;'
+  - sh -c 'if [ "$TRAVIS_PHP_VERSION" != "hhvm-nightly" ] && [ $(php -r "echo PHP_MINOR_VERSION;") -le 4 ]; then echo "extension = apc.so" >> ~/.phpenv/versions/$(phpenv version-name)/etc/php.ini; fi;'
+  - sh -c 'if [ $(php -r "echo PHP_MINOR_VERSION;") -ge 5 ]; then printf "\n" | pecl install apcu-beta; fi;'
+  - sh -c 'if [ "$TRAVIS_PHP_VERSION" != "hhvm-nightly" ]; then echo "extension = memcached.so" >> ~/.phpenv/versions/$(phpenv version-name)/etc/php.ini; fi;'
+  - sh -c 'if [ "$TRAVIS_PHP_VERSION" != "hhvm-nightly" ]; then echo "extension = memcache.so" >> ~/.phpenv/versions/$(phpenv version-name)/etc/php.ini; fi;'
+  - sh -c 'if [ "$TRAVIS_PHP_VERSION" != "hhvm-nightly" ]; then echo "memory_limit = -1" >> ~/.phpenv/versions/$(phpenv version-name)/etc/conf.d/travis.ini; fi;'
+  - sh -c 'printf "\n" | pecl install imagick'
+  - gem install sass
+  - npm install bower
+  - npm install grunt
+  - npm install grunt-cli
+  - npm install uglify-js
+  - npm install uglifycss
+  - chmod -R 777 app/cache/ app/logs/
+
+
+before_script:
+  - composer require symfony/symfony:${SYMFONY_VERSION}
+  - mysql -e 'create database kunstmaanbundles;'
+  - app/console kuma:generate:bundle --namespace="MyProject\\WebsiteBundle" --no-interaction --dir=src
+  - app/console kuma:generate:default-site --namespace="MyProject\\WebsiteBundle" --prefix="myproject_" --demosite --no-interaction
+  - app/console kuma:generate:admin-tests --namespace="MyProject\\WebsiteBundle"
+  - bundle install
+  - npm install
+  - bower install
+  - grunt build || gulp build
+  - app/console --force --no-interaction doctrine:schema:drop --env=test
+  - app/console --no-interaction doctrine:schema:create --env=test
+  - app/console --no-interaction doctrine:fixtures:load --env=test
+  - app/console --no-interaction assets:install --env=test
+  - app/console --no-interaction assetic:dump --env=test
+  - app/console --no-interaction cache:clear --env=test
+  - app/console --no-interaction cache:warmup --env=test
+  - chmod -R 777 app/cache/ app/logs/
+  - app/console server:run &
+  - export DISPLAY=:99.0
+  - sh -e /etc/init.d/xvfb start
+  - sleep 3
+  - wget http://selenium-release.storage.googleapis.com/2.45/selenium-server-standalone-2.45.0.jar
+  - java -jar selenium-server-standalone-2.45.0.jar > /dev/null 2>&1 &
+  - sleep 5
+
+script:
+    - phpunit -c app
+    - php -d memory_limit=2048M bin/behat @MyProjectWebsiteBundle --verbose
+
+notifications:
+  email:
+    - travis@kunstmaan.be
